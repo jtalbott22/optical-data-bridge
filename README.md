@@ -92,7 +92,7 @@ It starts conservative (1 unit, 1 tile, 3 fps) for a clean initial lock, ramps a
 
 ## Roadmap ideas
 
-Forward error correction, color multiplexing, multi-device broadcast, alternative symbol formats, and a formal protocol specification are all natural extensions. See the companion write-up for a deeper discussion of the protocol design.
+Forward error correction, color multiplexing, multi-device broadcast, alternative symbol formats, and a formal protocol specification are all natural extensions.
 
 ## License
 
