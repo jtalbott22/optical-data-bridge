@@ -8,6 +8,9 @@ No Bluetooth. No Wi-Fi. No cables. No server. Just visible light.
 
 **Live demo:** [joshuaallentalbott.com/optical-data-bridge.html](https://joshuaallentalbott.com/optical-data-bridge.html)
 
+Video example: [https://youtube.com/shorts/ZntjNEJ7t1Y?is=q6BuPjFw9m81z4BB]
+(https://youtube.com/shorts/ZntjNEJ7t1Y?is=q6BuPjFw9m81z4BB)
+
 ---
 
 ## Why
