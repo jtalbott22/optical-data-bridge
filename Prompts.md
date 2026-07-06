@@ -17,3 +17,8 @@ follow up:
 follow up:
 
 "Can you help me write a github readme based on this?"
+
+
+follow up:
+
+"Write me a build script for a custom Linux firmware that basically launches a single file with chromium at startup and has the display drivers and camera drivers included. Target raspberry pie."
