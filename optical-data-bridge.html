@@ -43,6 +43,11 @@
   select{appearance:none}
   .meta{margin-top:8px;font-family:ui-monospace,monospace;font-size:13px;color:var(--rx)}
   .warn{margin-top:8px;font-size:12.5px;color:var(--tx);line-height:1.4}
+  .encRow{display:flex;align-items:center;gap:9px;margin-top:14px;font-size:13.5px;color:var(--muted);cursor:pointer;user-select:none}
+  .encRow input{width:16px;height:16px;accent-color:var(--good)}
+  .encRow small{display:block;font-size:11.5px;opacity:.7}
+  .sas{display:none;margin-top:8px;text-align:center;font-size:13px;color:var(--muted)}
+  .sas b{font-family:ui-monospace,monospace;font-size:15px;letter-spacing:2px;color:var(--good)}
   .btnrow{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:26px}
   button{font-family:inherit;font-size:15px;font-weight:650;cursor:pointer;
     border-radius:12px;padding:15px 16px;border:1px solid var(--line);
@@ -95,6 +100,7 @@
   #bar{height:100%;width:0;background:var(--accent);transition:width .3s;box-shadow:0 0 12px var(--accent)}
   .status{font-size:13.5px;color:var(--muted);text-align:center;min-height:18px}
   .status.good{color:var(--good)}
+  .status.err{color:var(--bad)}
   #dlWrap{text-align:center;display:none}
   #dlLink{display:inline-block;color:var(--ink);background:var(--good);font-weight:700;
     text-decoration:none;padding:12px 20px;border-radius:12px;font-size:15px}
@@ -134,6 +140,11 @@
       <span class="label">Camera</span>
       <select id="camSel"></select>
     </div>
+
+    <label class="encRow" id="encRow">
+      <input type="checkbox" id="encToggle">
+      <span>🔒 Encrypt transfer (end-to-end)<small>Ephemeral ECDH key exchange + AES-256-GCM, keys never leave the devices</small></span>
+    </label>
 
     <div class="btnrow">
       <button id="btnSend" class="send" disabled>Send file</button>
@@ -189,6 +200,7 @@
     </div>
 
     <div id="statusMsg" class="status"></div>
+    <div id="sasWrap" class="sas">🔒 Verify both screens show <b id="sasCode"></b></div>
     <div id="dlWrap"><a id="dlLink" href="#"></a></div>
   </section>
 
@@ -12649,6 +12661,66 @@ var qrcode = function() {
   }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+  // ---------------------------------------------------------------- crypto (optional encrypted mode)
+  // Ephemeral ECDH (P-256) handshake over the optical link itself, then the
+  // whole file is sealed once with AES-256-GCM before it enters the normal
+  // unit pipeline. Ciphertext = 12-byte random IV || AES-GCM output (which
+  // carries its own 128-bit auth tag), so any injected or tampered frame
+  // fails authentication at assembly time. CRC16/CRC32 remain purely
+  // transport-level error detection. Private keys and the derived session
+  // key never leave RAM (deriveKey with extractable=false).
+  //
+  // Unauthenticated ECDH is MITM-able in principle, so both screens display
+  // a short authentication string (SAS) derived from SHA-256 of both public
+  // keys — a man-in-the-middle cannot make the two SAS values match. Users
+  // glance and confirm, same idea as Signal safety numbers.
+  var CRYPTO_OK = !!(window.crypto && window.crypto.subtle && window.isSecureContext !== false);
+  var SAS_EMOJI = ['🦊','🌵','🎈','🔑','⚡','🍀','🚀','🎲','🐢','🌙','🍩','🎸','🧲','🦉','🌊','🔥',
+                   '🍄','🎯','🐝','🧊','🌶️','🛸','🦋','⚙️','🍉','🎹','🐙','🌻','🧭','🪁','🦕','🫐'];
+  function sasFrom(senderPubB64, receiverPubB64) {
+    var data = new TextEncoder().encode(senderPubB64 + '.' + receiverPubB64);
+    return crypto.subtle.digest('SHA-256', data).then(function (h) {
+      var b = new Uint8Array(h), out = '';
+      for (var i = 0; i < 5; i++) out += SAS_EMOJI[b[i] % 32];
+      var hex = '';
+      for (var j = 5; j < 7; j++) hex += b[j].toString(16).padStart(2, '0');
+      return out + ' ' + hex.toUpperCase();
+    });
+  }
+  function genKeys() {
+    return crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey'])
+      .then(function (pair) {
+        return crypto.subtle.exportKey('raw', pair.publicKey).then(function (raw) {
+          return { pair: pair, pubB64: bytesToB64(new Uint8Array(raw)) };
+        });
+      });
+  }
+  function deriveSession(myPair, peerPubB64) {
+    return crypto.subtle.importKey('raw', b64ToBytes(peerPubB64),
+      { name: 'ECDH', namedCurve: 'P-256' }, false, [])
+      .then(function (peerKey) {
+        return crypto.subtle.deriveKey(
+          { name: 'ECDH', public: peerKey }, myPair.privateKey,
+          { name: 'AES-GCM', length: 256 },
+          false,                       // not extractable — cannot be lifted from RAM via JS
+          ['encrypt', 'decrypt']);
+      });
+  }
+  function encryptBytes(key, bytes) {
+    var iv = crypto.getRandomValues(new Uint8Array(12));
+    return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, bytes).then(function (ct) {
+      var out = new Uint8Array(12 + ct.byteLength);
+      out.set(iv, 0);
+      out.set(new Uint8Array(ct), 12);
+      return out;
+    });
+  }
+  function decryptBytes(key, packet) {
+    var iv = packet.subarray(0, 12), ct = packet.subarray(12);
+    return crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct)
+      .then(function (plain) { return new Uint8Array(plain); });
+  }
+
   // ---------------------------------------------------------------- protocol
   // Data:   D | sess | start | count | total | crc16(data) | data
   // Header: H | sess | total | size  | b64len| crc32 | nameB64
@@ -12664,14 +12736,24 @@ var qrcode = function() {
     if (crc16(data) !== p[5]) return null;
     return { start: +p[2], count: +p[3], total: +p[4], data: data, sess: p[1] };
   }
-  function encHeader(sess, total, size, b64len, crc, nameB64) {
-    return ['H', sess, total, size, b64len, crc, nameB64].join(SEP);
+  function encHeader(sess, total, size, b64len, crc, nameB64, enc) {
+    return ['H', sess, total, size, b64len, crc, nameB64, enc ? 1 : 0].join(SEP);
   }
   function decHeader(s) {
     if (s.charAt(0) !== 'H') return null;
     var p = s.split(SEP);
     if (p.length < 7) return null;
-    return { sess: p[1], total: +p[2], size: +p[3], b64len: +p[4], crc: p[5], name: nameDec(p[6]) };
+    return { sess: p[1], total: +p[2], size: +p[3], b64len: +p[4], crc: p[5], name: nameDec(p[6]), enc: p[7] === '1' };
+  }
+  // Key exchange: K | sess | role(S/R) | rawPublicKeyB64
+  function encKey(sess, role, pub) {
+    return ['K', sess, role, pub].join(SEP);
+  }
+  function decKey(s) {
+    if (s.charAt(0) !== 'K') return null;
+    var p = s.split(SEP);
+    if (p.length < 4) return null;
+    return { sess: p[1], role: p[2], pub: p[3] };
   }
   function encReport(sess, recv, total, dps, err, miss, done) {
     return ['R', sess, recv, total, dps, err ? 1 : 0, miss.join(','), done ? 1 : 0].join(SEP);
@@ -12813,6 +12895,7 @@ var qrcode = function() {
     tx: null,
     rx: null,
     recv: null,
+    hs: null,                   // ECDH handshake state for encrypted transfers
     lastQrVer: 0
   };
 
@@ -12947,6 +13030,7 @@ var qrcode = function() {
   function saveProgress(force) {
     var R = S.recv;
     if (!storeOk || !R || !R.header || R.done) return;
+    if (R.header.enc) return;   // ephemeral session keys don't survive reloads; persisting ciphertext can't help
     var now = performance.now();
     if (!force && now - lastSave < 800) return;   // throttle writes
     lastSave = now;
@@ -13004,20 +13088,72 @@ var qrcode = function() {
   window.addEventListener('pagehide', function () { saveProgress(true); });
 
   // ---------------------------------------------------------------- SENDER
-  function beginSend(bytes, filename) {
-    var b64 = bytesToB64(bytes);
+  // armTx loads payload bytes (plaintext or ciphertext) into the unit
+  // pipeline. Everything downstream — units, CRCs, optimizer, resume — is
+  // agnostic to whether the payload happens to be encrypted.
+  function armTx(payloadBytes, filename, displaySize, enc) {
+    var b64 = bytesToB64(payloadBytes);
     var total = Math.ceil(b64.length / UNIT);
-    S.sess = Math.random().toString(36).slice(2, 6);
     S.tx = {
-      b64: b64, total: total, cursor: 0, priority: [],
-      header: encHeader(S.sess, total, bytes.length, b64.length, crc32(b64), nameEnc(filename)),
-      name: filename, size: bytes.length
+      b64: b64, total: total, cursor: 0, priority: [], enc: !!enc,
+      header: encHeader(S.sess, total, displaySize, b64.length, crc32(b64), nameEnc(filename), enc),
+      name: filename, size: displaySize
     };
     S.rx = { recv: 0, total: total, dps: 0, done: false };
+    S.frame = 0;
+  }
+
+  function beginSend(bytes, filename) {
+    S.sess = Math.random().toString(36).slice(2, 6);
     S.mode = 'send';
     S.linkAt = 0;
     S.adapt = new Adaptive();
-    enterStage('TRANSMIT', filename + '  ·  ' + fmtBytes(bytes.length) + '  ·  ' + total + ' units');
+    S.hs = null;
+    S.tx = null;
+    var encrypted = $('encToggle').checked && CRYPTO_OK;
+    if (!encrypted) {
+      armTx(bytes, filename, bytes.length, false);
+      enterStage('TRANSMIT', filename + '  ·  ' + fmtBytes(bytes.length) + '  ·  ' + S.tx.total + ' units');
+      return;
+    }
+    // Encrypted: hold the payload until the optical handshake completes.
+    S.hs = { my: null, peerPub: null, key: null, sas: null, busy: false,
+             pending: { bytes: bytes, name: filename } };
+    enterStage('TRANSMIT 🔒', 'Handshake: flashing public key — waiting for receiver…');
+    genKeys().then(function (k) { S.hs.my = k; })
+      .catch(function (e) { setText('statusMsg', 'Key generation failed: ' + e.message); $('statusMsg').className = 'status err'; });
+  }
+
+  // Derive the session key from the receiver's public key, seal the file,
+  // and arm the normal transmit pipeline. Also invoked when a *different*
+  // receiver key shows up mid-transfer (receiver reloaded its tab and lost
+  // its ephemeral key): we transparently re-handshake and re-encrypt, which
+  // yields a fresh ciphertext/CRC — the receiver treats it as a new file.
+  function armEncryptedTx(peerPub) {
+    S.hs.busy = true;
+    S.hs.peerPub = peerPub;
+    S.hs.key = null;
+    deriveSession(S.hs.my.pair, peerPub)
+      .then(function (key) {
+        S.hs.key = key;
+        return sasFrom(S.hs.my.pubB64, peerPub);
+      })
+      .then(function (sas) {
+        S.hs.sas = sas;
+        showSas(sas);
+        return encryptBytes(S.hs.key, S.hs.pending.bytes);
+      })
+      .then(function (packet) {
+        armTx(packet, S.hs.pending.name, S.hs.pending.bytes.length, true);
+        S.hs.busy = false;
+        setText('statusMsg', S.tx.name + '  ·  ' + fmtBytes(S.tx.size) + '  ·  ' + S.tx.total + ' units · encrypted');
+        $('statusMsg').className = 'status';
+      })
+      .catch(function (e) {
+        S.hs.busy = false;
+        S.hs.peerPub = null;
+        setText('statusMsg', 'Handshake failed (' + e.message + ') — retrying…');
+      });
   }
 
   function dataCodeFor(start, upc) {
@@ -13029,6 +13165,11 @@ var qrcode = function() {
   }
 
   function buildFrame() {
+    // Handshake phase: nothing to transmit yet, just flash our public key.
+    if (S.hs && !S.tx) {
+      if (!S.hs.my) return [];
+      return [{ text: encKey(S.sess, 'S', S.hs.my.pubB64), units: 0 }];
+    }
     var upc = S.adapt.units;
     var windows = Math.max(1, Math.ceil(S.tx.total / upc));
     var want = Math.min(S.adapt.tiles, windows);      // don't tile duplicate windows
@@ -13036,6 +13177,11 @@ var qrcode = function() {
     // header roughly twice a second
     var headEvery = Math.max(1, Math.round(S.adapt.fps / 2));
     if (S.frame % headEvery === 0) codes.push({ text: S.tx.header, units: 0 });
+    // encrypted sessions: re-broadcast our public key every ~2 s so a
+    // receiver that reloaded (and lost its ephemeral key) can re-handshake
+    else if (S.tx.enc && S.hs && S.hs.my && S.frame % (headEvery * 4) === 1) {
+      codes.push({ text: encKey(S.sess, 'S', S.hs.my.pubB64), units: 0 });
+    }
     // reported-missing units first
     while (codes.length < want && S.tx.priority.length) {
       codes.push(dataCodeFor(S.tx.priority.shift(), upc));
@@ -13052,6 +13198,7 @@ var qrcode = function() {
   function senderDraw() {
     S.frame++;
     var codes = buildFrame();
+    if (!codes.length) return;    // handshake keys still generating
     layoutAndPaint(codes.map(function (c) { return c.text; }));
     var now = performance.now(), units = 0;
     for (var i = 0; i < codes.length; i++) units += codes[i].units;
@@ -13061,6 +13208,7 @@ var qrcode = function() {
 
   function onReport(rep) {
     if (rep.sess !== S.sess) return;
+    if (!S.tx || !S.rx) return;   // handshake still in progress; nothing armed yet
     S.linkAt = performance.now();
     S.rx.recv = rep.recv; S.rx.total = rep.total; S.rx.dps = rep.dps; S.rx.done = rep.done;
     for (var i = 0; i < rep.miss.length; i++) {
@@ -13099,6 +13247,7 @@ var qrcode = function() {
     pruneStale();
     S.mode = 'recv';
     S.sess = '';
+    S.hs = null;
     S.recv = {
       header: null, units: null, got: 0, total: 0,
       rate: new Rate(), lastNew: performance.now(), done: false, assembled: false
@@ -13166,16 +13315,44 @@ var qrcode = function() {
       setText('statusMsg', 'Checksum mismatch — re-collecting ' + R.header.name);
       return;
     }
-    R.assembled = true; R.done = true;
+    if (R.header.enc) {
+      // Ciphertext fully collected and transport-clean. Now the real check:
+      // AES-GCM decryption authenticates every byte against the session key.
+      if (!S.hs || !S.hs.key) {
+        setText('statusMsg', 'All units received but no session key — waiting for key exchange…');
+        return;   // sender's periodic K frame will trigger a (re)handshake
+      }
+      R.assembled = true;   // block re-entry while decrypting
+      decryptBytes(S.hs.key, b64ToBytes(b64))
+        .then(function (plain) { deliver(plain); })
+        .catch(function () {
+          // Auth tag failed: tampered frames, or ciphertext from a stale key
+          // (sender rekeyed mid-collection). Wipe and re-collect — the
+          // sender's current stream carries a matching key and fresh CRC.
+          console.warn('AES-GCM authentication failed — discarding and re-collecting.');
+          R.assembled = false;
+          R.header = null; R.units = null; R.got = 0; R.total = 0;
+          R.lastNew = performance.now();
+          setText('statusMsg', 'Decryption failed (tampering or stale key) — restarting collection.');
+          $('statusMsg').className = 'status err';
+        });
+      return;
+    }
+    R.assembled = true;
     purgeProgress(R.header.crc);   // complete: no need to keep resume data
-    var bytes = b64ToBytes(b64);
+    deliver(b64ToBytes(b64));
+  }
+
+  function deliver(bytes) {
+    var R = S.recv;
+    R.assembled = true; R.done = true;
     var blob = new Blob([bytes], { type: 'application/octet-stream' });
     var url = URL.createObjectURL(blob);
     var link = $('dlLink');
     link.href = url; link.download = R.header.name;
     link.textContent = 'Save ' + R.header.name;
     $('dlWrap').style.display = 'block';
-    setText('statusMsg', 'Complete — ' + R.header.name + ' (' + fmtBytes(R.header.size) + ')');
+    setText('statusMsg', 'Complete — ' + R.header.name + ' (' + fmtBytes(R.header.size) + ')' + (R.header.enc ? ' · decrypted ✓' : ''));
     $('statusMsg').className = 'status good';
   }
 
@@ -13186,6 +13363,16 @@ var qrcode = function() {
     var miss = [];
     if (R.header) for (var i = 0; i < R.total && miss.length < 24; i++) if (R.units[i] == null) miss.push(i);
     var dps = Math.round(R.rate.rate(now));
+    // Encrypted sessions: before the (encrypted) header arrives, our public
+    // key IS the response. After that, keep interleaving it every 4th frame
+    // until completion — if the sender rekeys (or we're mid-resync), it must
+    // be able to see our key without us knowing it needs to.
+    if (S.hs && S.hs.my && !R.done) {
+      var kFrame = encKey(S.hs.sess, 'R', S.hs.my.pubB64);
+      if (!R.header) { layoutAndPaint([kFrame]); updateHud(); return; }
+      S.frame++;
+      if (R.header.enc && S.frame % 4 === 0) { layoutAndPaint([kFrame]); updateHud(); return; }
+    }
     var report = encReport(S.sess || '----', R.got, R.total, dps, err, miss, R.done);
     layoutAndPaint([report]);
     updateHud();
@@ -13248,14 +13435,74 @@ var qrcode = function() {
   }
   function route(str) {
     if (S.mode === 'send') {
+      var k = decKey(str);
+      if (k) { onPeerKey(k); return; }
       var rep = decReport(str);
       if (rep) onReport(rep);
     } else if (S.mode === 'recv') {
+      var k2 = decKey(str);
+      if (k2) { onSenderKey(k2); return; }
       var h = decHeader(str);
       if (h) { onHeader(h); return; }
       var d = decData(str);
       if (d) onData(d);
     }
+  }
+
+  // Sender: receiver's public key arrived (or changed — reloaded receiver).
+  function onPeerKey(k) {
+    if (!S.hs || !S.hs.my || S.hs.busy) return;
+    if (k.role !== 'R' || k.sess !== S.sess) return;
+    if (k.pub === S.hs.peerPub) return;               // already keyed with this peer
+    S.linkAt = performance.now();
+    if (S.hs.peerPub) {
+      // Different key mid-session: receiver lost its ephemeral state.
+      // Re-handshake + re-encrypt; the fresh CRC makes it a clean restart.
+      console.warn('Receiver key changed — rekeying session.');
+      S.adapt = new Adaptive();
+      S.adapt.phase = 'REKEY';
+    }
+    armEncryptedTx(k.pub);
+  }
+
+  // Receiver: sender is initiating (or re-broadcasting) an encrypted session.
+  function onSenderKey(k) {
+    if (k.role !== 'S') return;
+    if (!CRYPTO_OK) {
+      setText('statusMsg', 'Sender wants an encrypted transfer, but Web Crypto is unavailable here (needs HTTPS).');
+      $('statusMsg').className = 'status err';
+      return;
+    }
+    var H = S.hs;
+    if (H && H.senderPub === k.pub && H.sess === k.sess) return;   // already handshaking/keyed with this sender
+    if (H && H.busy) return;
+    S.sess = k.sess;
+    S.linkAt = performance.now();
+    S.hs = { sess: k.sess, senderPub: k.pub, my: null, key: null, sas: null, busy: true };
+    var mine = S.hs;
+    setText('statusMsg', 'Encrypted session — exchanging keys…');
+    genKeys()
+      .then(function (me) {
+        if (S.hs !== mine) return;                     // superseded
+        mine.my = me;
+        return deriveSession(me.pair, k.pub);
+      })
+      .then(function (key) {
+        if (S.hs !== mine || !key) return;
+        mine.key = key;
+        return sasFrom(k.pub, mine.my.pubB64);
+      })
+      .then(function (sas) {
+        if (S.hs !== mine || !sas) return;
+        mine.sas = sas;
+        mine.busy = false;
+        showSas(sas);
+        setText('statusMsg', 'Encrypted session ready — confirm both screens show the same code.');
+      })
+      .catch(function (e) {
+        if (S.hs === mine) S.hs = null;
+        setText('statusMsg', 'Handshake failed: ' + e.message);
+      });
   }
   function startLoop() { if (!S.rafId) S.rafId = requestAnimationFrame(loop); }
   function stopLoop() { if (S.rafId) cancelAnimationFrame(S.rafId); S.rafId = 0; }
@@ -13301,6 +13548,10 @@ var qrcode = function() {
   }
 
   // ---------------------------------------------------------------- UI wiring
+  function showSas(sas) {
+    setText('sasCode', sas);
+    $('sasWrap').style.display = 'block';
+  }
   function enterStage(tag, sub) {
     $('setup').style.display = 'none';
     $('stage').style.display = 'flex';
@@ -13309,6 +13560,7 @@ var qrcode = function() {
     setText('statusMsg', sub);
     $('statusMsg').className = 'status';
     $('dlWrap').style.display = 'none';
+    $('sasWrap').style.display = 'none';
     S.lastDraw = 0; S.lastScan = 0; S.frame = 0;
     keepAwake();
     startLoop();
@@ -13362,6 +13614,13 @@ var qrcode = function() {
   });
   $('camSel').addEventListener('change', function () { if (S.mode) startCamera(); });
   window.addEventListener('resize', function () { fitDisplay(); });
+
+  // encryption requires a secure context (same requirement as the camera)
+  if (!CRYPTO_OK) {
+    $('encToggle').disabled = true;
+    $('encRow').style.opacity = '0.45';
+    $('encRow').title = 'Web Crypto unavailable — serve over HTTPS or localhost.';
+  }
 
   // prime device labels (permission may be needed first; that's fine)
   if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
