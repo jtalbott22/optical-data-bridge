@@ -116,6 +116,17 @@ It starts conservative (1 unit, 1 tile, 3 fps) for a clean initial lock, ramps a
 
 Forward error correction, color multiplexing, multi-device broadcast, alternative symbol formats, and a formal protocol specification are all natural extensions.
 
+## Similar projects
+
+The concept here was arrived at from looking at how stuff works. It turns out several people have had similar ideas, and their takes are all worth a look:
+
+mohankumarelec/airgapped-qr-code-transfer: browser-based QR file transfer with compression and sequential chunking. Discovered after publicly demoing this project; convergent evolution in action.
+divan/txqr (2018): animated QR plus fountain codes in Go, with two excellent write-ups on why fountain coding beats sequential looping.
+sz3/libcimbar: goes past QR entirely with a custom high-density color code purpose-built for this channel.
+Built with node-qrcode and zxing-wasm.
+
+
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
