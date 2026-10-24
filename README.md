@@ -12,6 +12,27 @@ Video example: <https://youtube.com/shorts/ZntjNEJ7t1Y?is=q6BuPjFw9m81z4BB>
 
 ---
 
+## Hardcopy — the companion app
+
+**[`hardcopy.html`](hardcopy.html)** · **Live:** [joshuaallentalbott.com/hardcopy.html](https://joshuaallentalbott.com/hardcopy.html) · **Demo reel:** [instagram.com/reel/DdMubjwtyLN](https://www.instagram.com/reel/DdMubjwtyLN/)
+
+Hardcopy is a set of practical QR tools packed into one self-contained HTML file. It grew out of Optical Data Bridge: it keeps the optical transport and pairing handshake, and adds tools for making, reading and printing codes. Everything runs in the page and works offline. The decoders (including the WebAssembly binary) and the typefaces are embedded, so nothing has to be downloaded.
+
+It has four tabs:
+
+| Tab | What it does |
+| --- | --- |
+| **Studio** | **Make a code** for a link, Wi-Fi network, contact card, email, text message, phone number, location, or plain text. You can style it with themes, gradients, module and corner shapes, a centre logo, a frame and caption, and an error-correction level, then export PNG (1024 or 2048 px), JPEG, or SVG, or print it. **Read codes** (`hardcopy.html#read`) scans from a camera or from imported photos and screenshots, keeps a local history that flags duplicates, and exports that history. |
+| **File → QR pages** | Turns any file into numbered, self-identifying QR tiles on printable pages (print or save as PDF). You can choose the paper size, density presets matched to how you'll read the pages back, optional compression, a calibration sheet, a cover page, and an optional passphrase (AES-256-GCM). **RAID-style redundancy** lets the file survive lost pages: mirroring (RAID 1), XOR parity (RAID 5), or double parity over GF(256) (RAID 6). A stripe's tiles are spread across different sheets, so losing one page costs each stripe only one tile. |
+| **QR pages → file** | Rebuilds the file from its tiles, read by the camera or from photos, scans, or an imported PDF. Tiles can arrive in any order, and progress is saved in the browser until the file is complete. |
+| **Beam** | Transfers a file or text from screen to camera. It uses **fountain coding**, so the receiver can join at any moment and needs no back channel. Three privacy modes: **Open**; **Passphrase** (AES-256-GCM, key from PBKDF2 with 250k rounds); and **Paired** (an ephemeral ECDH P-256 handshake over the optical link, confirmed by matching emoji on both screens, carried over from Optical Data Bridge). |
+
+**Secret codes (HCS1).** Studio can seal a code's contents behind a passphrase. The payload is AES-256-GCM with the key derived by PBKDF2-HMAC-SHA256, encoded as `HCS1:` plus RFC 4648 base32. It can also be wrapped as `hardcopy.html#HCS1:…`, so any phone camera can open it in Hardcopy and unlock it there. The byte layout is documented in the app ("The format, for anyone writing a reader").
+
+**Decoding architecture.** The primary reader is ZXing compiled to WebAssembly (via zxing-wasm), with jsQR as a JavaScript fallback. This design exists because Safari has never shipped `BarcodeDetector` ([WebKit bug 281848](https://bugs.webkit.org/show_bug.cgi?id=281848)). PDF imports are rasterised with pdf.js.
+
+---
+
 ## Why
 
 QR codes are usually treated as static, one-shot data containers. Optical Data Bridge treats them as **frames in a transport protocol** — with sessions, acknowledgements, retransmission, integrity checks, congestion control, and an optional authenticated-encryption layer — all carried over a bidirectional optical link between two commodity devices.
@@ -120,12 +141,47 @@ Forward error correction, color multiplexing, multi-device broadcast, alternativ
 
 The concept here was arrived at from looking at how stuff works. It turns out several people have had similar ideas, and their takes are all worth a look:
 
-mohankumarelec/airgapped-qr-code-transfer: browser-based QR file transfer with compression and sequential chunking. Discovered after publicly demoing this project; convergent evolution in action.
-divan/txqr (2018): animated QR plus fountain codes in Go, with two excellent write-ups on why fountain coding beats sequential looping.
-sz3/libcimbar: goes past QR entirely with a custom high-density color code purpose-built for this channel.
-Built with node-qrcode and zxing-wasm.
+- [mohankumarelec/airgapped-qr-code-transfer](https://github.com/mohankumarelec/airgapped-qr-code-transfer): browser-based QR file transfer with compression and sequential chunking, built with Vue.js, pako, qrcode.js and zbar-wasm. Discovered after publicly demoing this project; convergent evolution in action.
+- [divan/txqr](https://github.com/divan/txqr) (2018): animated QR plus fountain codes in Go, with two excellent write-ups on why fountain coding beats sequential looping.
+- [sz3/libcimbar](https://github.com/sz3/libcimbar): goes past QR entirely with a custom high-density color code purpose-built for this channel.
+- [bashalarmistalt/decimen-optical-transfer](https://github.com/bashalarmistalt/decimen-optical-transfer) (Decimen Optical Transfer): see *Credits* below. Several of Hardcopy's design decisions come from it.
 
+**What our apps are built with.** Optical Data Bridge uses [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) to encode and [jsQR](https://github.com/cozmo/jsQR) to decode. Hardcopy uses qrcode-generator to encode, with [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) as its primary decoder and jsQR as the fallback. Neither app uses node-qrcode. The full list is under *Credits & sources* below.
 
+## Credits & sources
+
+Third-party code is bundled under each project's own licence, with thanks. Both apps embed their dependencies inline, so each licence travels with the file.
+
+### Code
+
+| Project | Author | Licence | Used in | Role |
+| --- | --- | --- | --- | --- |
+| [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) ([d-project.com](http://www.d-project.com/)) | Kazuhiko Arase | MIT | Optical Data Bridge, Hardcopy | QR encoder |
+| [jsQR](https://github.com/cozmo/jsQR) | Cosmo Wolfe | Apache-2.0 | Optical Data Bridge (decoder), Hardcopy (fallback decoder) | QR decoder |
+| [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) | The ZXing C++ project | Apache-2.0 | Hardcopy | Primary decoder |
+| [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) | Ze-Zheng Wu | MIT | Hardcopy | zxing-cpp compiled to WebAssembly |
+| [pdf.js](https://mozilla.github.io/pdf.js/) | Mozilla | Apache-2.0 | Hardcopy | Reads QR pages out of imported PDFs |
+
+Encryption in both apps uses the browser's built-in [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) (ECDH P-256, AES-256-GCM, PBKDF2, SHA-256). Compression uses the native `CompressionStream`.
+
+### Typefaces (Hardcopy)
+
+All are embedded and licensed under the [SIL Open Font License 1.1](https://openfontlicense.org/).
+
+| Typeface | Designer | Source |
+| --- | --- | --- |
+| Newsreader | Production Type | [github.com/productiontype/Newsreader](https://github.com/productiontype/Newsreader) (subset to the characters the app uses, weight axis instanced at 400) |
+| Atkinson Hyperlegible | Braille Institute of America | [brailleinstitute.org/freefont](https://brailleinstitute.org/freefont) |
+| B612 Mono | Airbus / PolarSys | [github.com/polarsys/b612](https://github.com/polarsys/b612) |
+
+### Ideas
+
+- **[Decimen Optical Transfer](https://github.com/bashalarmistalt/decimen-optical-transfer)** (AGPL-3.0). Hardcopy's decoding architecture follows Decimen's approach: a WebAssembly reader in front of a JavaScript fallback, because Safari lacks `BarcodeDetector`. Hardcopy's Beam tab borrows three more of its ideas: fountain coding over a channel with no back channel, a pinned QR mask, and error correction left at level L because the fountain code already covers what the parity would have. **None of Decimen's code is used.** The ideas are theirs; the measurements that justified adopting them were taken against Hardcopy.
+- **[Optical Data Bridge](https://github.com/jtalbott22/optical-data-bridge)** (this repository). It supplies Hardcopy's optical transport and the paired ECDH handshake that Beam carries.
+
+### Support
+
+Hardcopy is made by one person. If it earned its keep, there's a tip jar: [Support on Patreon](https://www.patreon.com/duh_live_video/posts/hardcopy-html-169247321).
 
 ## License
 
