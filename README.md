@@ -141,12 +141,10 @@ Forward error correction, color multiplexing, multi-device broadcast, alternativ
 
 The concept here was arrived at from looking at how stuff works. It turns out several people have had similar ideas, and their takes are all worth a look:
 
-- [mohankumarelec/airgapped-qr-code-transfer](https://github.com/mohankumarelec/airgapped-qr-code-transfer): browser-based QR file transfer with compression and sequential chunking, built with Vue.js, pako, qrcode.js and zbar-wasm. Discovered after publicly demoing this project; convergent evolution in action.
+- [mohankumarelec/airgapped-qr-code-transfer](https://github.com/mohankumarelec/airgapped-qr-code-transfer): browser-based QR file transfer with compression and sequential chunking. Discovered after publicly demoing this project; convergent evolution in action.
 - [divan/txqr](https://github.com/divan/txqr) (2018): animated QR plus fountain codes in Go, with two excellent write-ups on why fountain coding beats sequential looping.
 - [sz3/libcimbar](https://github.com/sz3/libcimbar): goes past QR entirely with a custom high-density color code purpose-built for this channel.
 - [bashalarmistalt/decimen-optical-transfer](https://github.com/bashalarmistalt/decimen-optical-transfer) (Decimen Optical Transfer): see *Credits* below. Several of Hardcopy's design decisions come from it.
-
-**What our apps are built with.** Optical Data Bridge uses [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) to encode and [jsQR](https://github.com/cozmo/jsQR) to decode. Hardcopy uses qrcode-generator to encode, with [zxing-wasm](https://github.com/Sec-ant/zxing-wasm) as its primary decoder and jsQR as the fallback. Neither app uses node-qrcode. The full list is under *Credits & sources* below.
 
 ## Credits & sources
 
